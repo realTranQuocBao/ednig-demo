@@ -1,9 +1,10 @@
 # EDNIG: Encoder-Decoder Network with Illumination Guidance for Low-Light Image Enhancement
 
 [![Preprint](https://img.shields.io/badge/Preprint-arXiv-red)](https://arxiv.org/abs/2507.13360)
+[![IEEE](https://img.shields.io/badge/Paper-IEEE-blue)](https://ieeexplore.ieee.org/abstract/document/11474151)
 [![Weights](https://img.shields.io/badge/Weights-Hugging_Face-gold)](https://huggingface.co/tranleanh/ednig)
 
-This is the implementation of the paper "Low-Light Enhancement via Encoder-Decoder Network with Illumination Guidance".
+Implementation of the paper "Low-Light Enhancement via Encoder-Decoder Network with Illumination Guidance" (ICCCE 2025).
 
 ## Introduction
 ### Framework Diagram
@@ -56,6 +57,15 @@ $ python train.py
   author={Tran, Le-Anh and Tran, Chung Nguyen and Nguyen, Ngoc-Luu and Dang, Nhan Cach and Carrabina, Jordi and Castells-Rufas, David and Nguyen, Minh Son},
   journal={arXiv preprint arXiv:2507.13360},
   year={2025}
+}
+
+@inproceedings{tran2025low,
+  title={Low-light enhancement via encoder-decoder network with illumination guidance},
+  author={Tran, Le-Anh and Tran, Chung Nguyen and Nguyen, Ngoc-Luu and Dang, Nhan Cach and Carrabina, Jordi and Castells-Rufas, David and Nguyen, Minh Son},
+  booktitle={2025 10th International Conference on Computer and Communication Engineering (ICCCE)},
+  pages={01--06},
+  year={2025},
+  organization={IEEE}
 }
 ```
 
