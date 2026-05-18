@@ -1,15 +1,18 @@
 """Inference utilities for the trained EDNIG generator.
 
-Three modes (via ``EDNIGEnhancer.enhance(..., mode=...)``):
+Four modes (via ``EDNIGEnhancer.enhance(..., mode=...)``):
 
   - ``"single"`` : resize the whole image to 512x512, run the model once,
                    then resize the result back. Fastest but loses fine
-                   detail on high-resolution input.
-  - ``"tiled"``  : slide a 512x512 window with overlap across the *native*
-                   resolution, blend overlapping tiles with a Hann window.
-                   Preserves full detail at any resolution.
-  - ``"auto"``   : pick single for images with max side <= 768, tiled
-                   otherwise. Sensible default.
+                   detail. (This is what the paper's ``test_on_images.py`` does.)
+  - ``"native"`` : pad to next multiple of 16 and run a single forward pass
+                   at the input's native resolution. Best quality / speed
+                   trade-off for images up to ~3 MP. Falls back to tiled on OOM.
+  - ``"tiled"``  : slide a 512x512 window with overlap across the native
+                   resolution, blend with a Hann window. Used for huge images
+                   that don't fit in VRAM as a single tensor.
+  - ``"auto"``   : native for images with max side <= 1280, tiled otherwise.
+                   Sensible default — full detail at full resolution.
 
 Also exposes ``classical_illumination_enhance`` as a training-free fallback.
 """
@@ -127,6 +130,39 @@ class EDNIGEnhancer:
             out_bgr = cv2.resize(out_bgr, (w, h), interpolation=cv2.INTER_LANCZOS4)
         return out_bgr
 
+    # ----- Strategy 1b: native resolution single pass (no resize, no tile) -----
+
+    def _enhance_native(self, bgr):
+        """Run the model ONCE at the input's native resolution.
+
+        The U-Net is fully convolutional, so it accepts any H,W divisible by
+        16 (4 levels of stride-2 pooling). We reflect-pad to the next
+        multiple of 16, run a single forward pass, then crop back.
+
+        Pros: no resize, no tile seams, fastest at high quality.
+        Cons: VRAM scales linearly with H*W. 12 MP image needs ~10-15 GB
+              VRAM and will OOM on most GPUs. Falls back to tiled on OOM.
+        """
+        import torch
+        h, w = bgr.shape[:2]
+        # Pad to next multiple of 16
+        pad_h = (16 - h % 16) % 16
+        pad_w = (16 - w % 16) % 16
+        bgr_p = cv2.copyMakeBorder(bgr, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT_101)
+
+        try:
+            with torch.inference_mode():
+                inp = _bgr_to_model_input(bgr_p, self.device)
+                out = self.model(inp)
+                out_bgr = _model_output_to_bgr(out)
+        except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
+            # Out of memory → fall back to tiled
+            torch.cuda.empty_cache() if self.device.type == "cuda" else None
+            print(f"[EDNIG] native OOM ({e.__class__.__name__}), falling back to tiled")
+            return self._enhance_tiled(bgr)
+
+        return out_bgr[:h, :w]
+
     # ----- Strategy 2: tiled inference at native resolution -----
 
     def _enhance_tiled(self, bgr, overlap=64):
@@ -192,15 +228,23 @@ class EDNIGEnhancer:
         """
         if self.model is None:
             raise RuntimeError("No model weights loaded.")
-        if mode not in ("auto", "single", "tiled"):
+        if mode not in ("auto", "single", "native", "tiled"):
             raise ValueError(f"Bad mode: {mode}")
 
         if mode == "auto":
+            # Smart default: try native for small-medium images, tile for huge.
+            # ~1280px max side ~ 3 MP needs ~3-4 GB VRAM, safe on 12 GB GPUs.
             h, w = bgr.shape[:2]
-            mode = "tiled" if max(h, w) > 768 else "single"
+            longest = max(h, w)
+            if longest <= 1280:
+                mode = "native"
+            else:
+                mode = "tiled"
 
         if mode == "single":
             return self._enhance_single(bgr)
+        if mode == "native":
+            return self._enhance_native(bgr)
         else:
             return self._enhance_tiled(bgr, overlap=overlap)
 

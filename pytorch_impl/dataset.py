@@ -106,9 +106,9 @@ class LOLDataset(Dataset):
         crop_min: float = 0.5,
         crop_max: float = 1.0,
         flip_prob: float = 0.5,
-        vflip_prob: float = 0.2,
-        rot90_prob: float = 0.3,
-        jitter_prob: float = 0.15,
+        vflip_prob: float = 0.0,    # off by default — was 0.2, caused weird outputs
+        rot90_prob: float = 0.0,    # off by default — was 0.3
+        jitter_prob: float = 0.0,   # off by default — was 0.15, "âm bản" artifact
     ):
         if split == "train":
             sub = "our485"
