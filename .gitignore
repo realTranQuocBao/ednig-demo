@@ -1,1 +1,66 @@
+# ============ Python ============
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ============ Virtual environments ============
+.venv/
+venv/
+env/
+ENV/
+.env
+.python-version
+
+# ============ Notebooks ============
+.ipynb_checkpoints/
+
+# ============ EDNIG: training outputs ============
+weights/g/
+weights/d/
+weights/*.pt
+weights/*.h5
+weights/*.pth
+logs/
+outputs/*/*.png
+outputs/*/*.jpg
+runs/
+tb_logs/
+wandb/
+
+# Keep example/pre-existing eval outputs (paper sample images)
+!outputs/ednig_lol_in512_ep180_best/
+
+# ============ Cache / temp ============
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============ IDE ============
+.vscode/
+.idea/
+*.iml
+.spyderproject
+.spyproject
+.ropeproject
+
+# ============ OS ============
+nul
+
+
 data/*
