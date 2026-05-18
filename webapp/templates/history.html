@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lịch sử — EDNIG</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">✦</span>
+      <div>
+        <h1>EDNIG · Lịch sử</h1>
+        <p>Tất cả ảnh đã được nâng sáng trong các phiên demo trước</p>
+      </div>
+    </div>
+    <div class="status">
+      <a href="/" class="link-btn ghost-link">← Quay lại trang chính</a>
+    </div>
+  </header>
+
+  <main>
+    {% if items|length == 0 %}
+      <section class="empty-state">
+        <h2>Chưa có lịch sử nào</h2>
+        <p>Hãy quay lại <a href="/">trang chính</a> và upload ảnh đầu tiên.</p>
+      </section>
+    {% else %}
+      <section class="history-toolbar">
+        <p class="meta">Tổng số: <strong>{{ items|length }}</strong> lần enhance · sắp xếp theo thời gian giảm dần</p>
+      </section>
+      <section class="history-grid">
+        {% for item in items %}
+          <article class="history-card" data-id="{{ item.id }}">
+            <div class="history-thumbs">
+              <div class="thumb">
+                <span class="thumb-label">Trước</span>
+                <img src="{{ item.thumb_input }}" alt="input" loading="lazy" />
+              </div>
+              <div class="thumb">
+                <span class="thumb-label">Sau</span>
+                <img src="{{ item.thumb_output }}" alt="output" loading="lazy" />
+              </div>
+            </div>
+            <div class="history-meta">
+              <p class="hm-name" title="{{ item.meta.original_filename or item.id }}">
+                {{ item.meta.original_filename or item.id }}
+              </p>
+              <p class="hm-info">
+                {{ item.meta.timestamp or "—" }}
+                {% if item.meta.width and item.meta.height %} · {{ item.meta.width }}×{{ item.meta.height }}{% endif %}
+                {% if item.meta.mode %} · <span class="mode-tag mode-{{ item.meta.mode }}">{{ item.meta.mode }}</span>{% endif %}
+                {% if item.meta.ms %} · {{ item.meta.ms }}ms{% endif %}
+              </p>
+              {% if item.meta.input_mean_brightness is defined and item.meta.output_mean_brightness is defined %}
+                <p class="hm-bright">
+                  Brightness: {{ "%.1f"|format(item.meta.input_mean_brightness) }} →
+                  <strong>{{ "%.1f"|format(item.meta.output_mean_brightness) }}</strong>
+                </p>
+              {% endif %}
+              <div class="history-actions">
+                <a class="link-btn ghost-link" href="/api/download?session={{ item.id }}&kind=enhanced&format=png">⬇ PNG</a>
+                <a class="link-btn ghost-link" href="/api/download?session={{ item.id }}&kind=original&format=png">⬇ Gốc</a>
+                <button class="link-btn ghost-link danger-btn" data-delete="{{ item.id }}">🗑 Xoá</button>
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      </section>
+    {% endif %}
+  </main>
+
+  <script>
+    document.querySelectorAll('button[data-delete]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const id = btn.getAttribute('data-delete');
+        if (!confirm('Xoá vĩnh viễn ' + id + ' ?')) return;
+        const r = await fetch('/history-check/' + encodeURIComponent(id), {method: 'DELETE'});
+        const d = await r.json();
+        if (d.ok) {
+          document.querySelector('article[data-id="' + id + '"]')?.remove();
+        } else {
+          alert('Lỗi: ' + (d.error || 'unknown'));
+        }
+      });
+    });
+  </script>
+</body>
+</html>

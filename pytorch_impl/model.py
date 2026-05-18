@@ -214,6 +214,7 @@ class Discriminator(nn.Module):
             nn.Linear(f5, 128),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Linear(128, 1),
+            nn.Sigmoid(),  # bounded output in [0, 1] -- matches Keras
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

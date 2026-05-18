@@ -64,3 +64,5 @@ nul
 
 
 data/*
+# Web app saved run history (input/output PNGs per enhance call)
+webapp/history/
