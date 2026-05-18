@@ -1,0 +1,1128 @@
+<<<train.py>>>
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+
+from tqdm import tqdm
+import numpy as np
+
+from core.utils import load_images_with_crop_flip_data_aug
+from core.losses import wasserstein_loss, perceptual_and_l2_loss
+from core.networks import unet_spp_swish_generator_model, unet_encoder_discriminator_model, gan_model
+
+from keras.optimizers import Adam
+
+BASE_DIR = 'weights/'
+
+
+d_weight_path = ""
+g_weight_path = ""
+
+
+def save_all_weights(d, g, epoch_number, current_loss):
+    save_dir_g = os.path.join(BASE_DIR, 'g')
+    if not os.path.exists(save_dir_g):
+        os.makedirs(save_dir_g)
+
+    save_dir_d = os.path.join(BASE_DIR, 'd')
+    if not os.path.exists(save_dir_d):
+        os.makedirs(save_dir_d)
+
+    g.save_weights(os.path.join(save_dir_g, 'generator_{}_{}.h5'.format(epoch_number, current_loss)), True)
+    d.save_weights(os.path.join(save_dir_d, 'discriminator_{}.h5'.format(epoch_number)), True)
+
+
+# def train_multiple_outputs(n_images, batch_size, log_dir, epoch_num, critic_updates=5):
+def train(n_images, batch_size, log_dir, epoch_num, critic_updates=5):
+
+    data = load_images_with_crop_flip_data_aug('path/to/dataset', n_images)
+    y_train, x_train = data['B'], data['A']
+
+    print("Total data:", len(y_train))
+
+    g = unet_spp_swish_generator_model()
+    g.summary()
+    d = unet_encoder_discriminator_model()
+    d_on_g = gan_model(g, d)
+
+    # Load pre-trained weights
+    if g_weight_path != "" and d_weight_path != "":
+        g.load_weights(g_weight_path)
+        d.load_weights(d_weight_path)
+
+    lr = 1E-4
+    decay_rate = lr/epoch_num*0.5
+
+    d_opt = Adam(lr=lr, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=decay_rate)
+    d_on_g_opt = Adam(lr=lr, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=decay_rate)
+
+
+    d.trainable = True
+    d.compile(optimizer=d_opt, loss=wasserstein_loss)
+    d.trainable = False
+
+    loss = [perceptual_and_l2_loss, wasserstein_loss]
+    loss_weights = [100, 1]
+
+    d_on_g.compile(optimizer=d_on_g_opt, loss=loss, loss_weights=loss_weights)
+    d.trainable = True
+
+    output_true_batch, output_false_batch = np.ones((batch_size, 1)), -np.ones((batch_size, 1))
+
+    log_path = './logs'
+
+    for e, epoch in enumerate(range(epoch_num)):
+
+        permutated_indexes = np.random.permutation(x_train.shape[0])
+
+        d_losses = []
+        d_on_g_losses = []
+
+        print('Epoch ' + str(e+1) + ' / ' + str(epoch_num))
+
+        for index in tqdm(range(int(x_train.shape[0] / batch_size))):
+            batch_indexes = permutated_indexes[index*batch_size:(index+1)*batch_size]
+
+            image_blur_batch = x_train[batch_indexes]
+            image_full_batch = y_train[batch_indexes]
+
+            generated_images = g.predict(x=image_blur_batch, batch_size=batch_size)
+
+            for _ in range(critic_updates):
+                d_loss_real = d.train_on_batch(image_full_batch, output_true_batch)
+                d_loss_fake = d.train_on_batch(generated_images, output_false_batch)
+                d_loss = 0.5 * np.add(d_loss_fake, d_loss_real)
+                d_losses.append(d_loss)
+
+            d.trainable = False
+
+            d_on_g_loss = d_on_g.train_on_batch(image_blur_batch, [image_full_batch, output_true_batch])
+            d_on_g_losses.append(d_on_g_loss)
+
+            d.trainable = True
+
+        print("-> DLoss:", np.mean(d_losses), "- GLoss", np.mean(d_on_g_losses))
+
+        epoch_ = epoch+1
+        if epoch_ % 5 == 0:
+            save_all_weights(d, g, epoch_, int(np.mean(d_on_g_losses)))
+
+
+if __name__ == '__main__':
+
+    # Train Parameters:
+    n_images = 20
+    batch_size = 1
+    log_dir = False
+    epoch_num = 20
+    critic_updates = 5
+
+    # Train Network
+    train(n_images, batch_size, log_dir, epoch_num, critic_updates)
+
+
+
+<<<test_on_images.py>>>
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+
+import cv2
+import glob
+import numpy as np
+from PIL import Image
+
+from core.utils import load_image, deprocess_image, preprocess_image
+from core.networks import unet_spp_swish_generator_model
+# from core.dcp import estimate_transmission
+from core.bcp import estimate_illumination
+
+
+img_size = 512
+
+
+def preprocess_image(cv_img):
+    cv_img = cv2.resize(cv_img, (img_size,img_size))
+    img = np.array(cv_img)
+    img = (img - 127.5) / 127.5
+    return img
+
+
+def load_image(path):
+    img = Image.open(path)
+    return img
+
+
+def deprocess_image(img):
+    img = img * 127.5 + 127.5
+    return img.astype('uint8')
+
+
+def get_file_name(path):
+    basename = os.path.basename(path)
+    onlyname = os.path.splitext(basename)[0]
+    return onlyname
+
+
+def preprocess_cv2_image(cv_img):
+    cv_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+    cv_img = cv2.resize(cv_img, (img_size, img_size))
+    img = np.array(cv_img)
+    img = (img - 127.5) / 127.5
+    return img
+
+
+def preprocess_depth_img(cv_img):
+    cv_img = cv2.resize(cv_img, (img_size, img_size))
+    img = np.array(cv_img)
+    img = np.reshape(img, (img_size, img_size, 1))
+    img = 2*(img - 0.5)
+    return img
+
+
+
+g = unet_spp_swish_generator_model()
+weight_path = "./weights/ednig_lol_in512_ep180_best.h5"
+g.load_weights(weight_path)
+g.summary()
+
+
+output_dir = "outputs/ednig_lol_in512_ep180_best"
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+
+if __name__ == "__main__":
+
+    img_src = glob.glob("./test_images/natural/*")
+
+    cnt=0
+    for img_path in img_src:
+
+        img_name = get_file_name(img_path)
+        ori_image = cv2.imread(img_path)
+        h, w, _ = ori_image.shape
+
+        ori_image = cv2.resize(ori_image, (img_size,img_size))
+
+        t = estimate_illumination(ori_image)
+        bcp_ch = t*255
+        t = preprocess_depth_img(t)
+
+        ori_image = preprocess_cv2_image(ori_image)
+
+        x_test = np.concatenate((ori_image, t), axis=2)
+
+        x_test = np.reshape(x_test, (1,img_size,img_size,4))
+        generated_images = g.predict(x=x_test)
+
+        de_test = deprocess_image(generated_images)
+        de_test = np.reshape(de_test, (img_size,img_size,3))
+
+        de_test = cv2.resize(de_test, (w, h), interpolation=cv2.INTER_CUBIC)
+
+        rgb_de_test = cv2.cvtColor(de_test, cv2.COLOR_BGR2RGB)
+        cv2.imwrite(f"{output_dir}/{img_name}.png", rgb_de_test)
+
+        cnt+=1
+        print(cnt, len(img_src))
+
+    print("Done!")
+
+
+<<<requirements.txt>>>
+absl-py==0.13.0
+astor==0.8.0
+astunparse==1.6.3
+attrs==19.3.0
+backcall==0.1.0
+backports.weakref==1.0rc1
+bleach==1.5.0
+cached-property==1.5.2
+cachetools==4.0.0
+certifi==2018.11.29
+chardet==3.0.4
+click==8.0.3
+contextvars==2.4
+cycler==0.10.0
+dataclasses==0.8
+decorator==4.4.0
+defusedxml==0.6.0
+dicom==0.9.9.post1
+dill==0.3.4
+dlx==1.0.4
+docplex==2.20.204
+entrypoints==0.3
+fastdtw==0.3.4
+fastjsonschema==2.15.1
+flatbuffers==1.12
+gast==0.5.3
+google-auth==1.11.3
+google-auth-oauthlib==0.4.1
+google-pasta==0.2.0
+grpcio==1.34.1
+h5py==2.7.1
+html5lib==0.9999999
+idna==2.8
+imageio==2.5.0
+immutables==0.15
+importlib-metadata==1.5.0
+imutils==0.5.3
+inflection==0.5.1
+ipykernel==5.1.4
+ipython==7.15.0
+ipython-genutils==0.2.0
+ipywidgets==7.5.1
+jax==0.1.3
+jaxlib==0.1
+jedi==0.16.0
+joblib==0.13.2
+jsonschema==3.2.0
+jupyter==1.0.0
+jupyter-client==6.0.0
+jupyter-console==6.1.0
+jupyter-core==4.6.3
+kaggle==1.5.1.1
+Keras==2.1.3
+Keras-Applications==1.0.8
+keras-contrib==2.0.8
+keras-nightly==2.5.0.dev2021032900
+Keras-Preprocessing==1.1.2
+kiwisolver==1.1.0
+Lasagne==0.1
+lxml==4.6.3
+Markdown==3.1.1
+mistune==0.8.4
+more-itertools==8.8.0
+mpmath==1.2.1
+multitasking==0.0.9
+nbconvert==5.6.1
+nbformat==5.0.4
+networkx==2.3
+notebook==6.0.3
+ntlm-auth==1.5.0
+numpy==1.17.2
+oauthlib==3.1.0
+opencv-python==4.1.2.30
+opt-einsum==3.3.0
+pandas==1.0.2
+pandocfilters==1.4.2
+parso==0.6.2
+pickleshare==0.7.5
+Pillow==6.2.0
+prometheus-client==0.7.1
+prompt-toolkit==3.0.4
+protobuf==3.17.3
+psutil==5.8.0
+ptyprocess==0.6.0
+pyasn1==0.4.8
+pyasn1-modules==0.2.8
+pybind11==2.6.2
+Pygments==2.6.1
+pylatexenc==2.10
+pyrsistent==0.15.7
+python-constraint==1.4.0
+python-dateutil==2.8.1
+python-slugify==2.0.0
+PyWavelets==1.0.3
+PyYAML==5.1.2
+pyzmq==19.0.0
+qiskit==0.27.0
+qiskit-aer==0.8.2
+qiskit-aqua==0.9.2
+qiskit-ibmq-provider==0.14.0
+qiskit-ignis==0.6.0
+qiskit-terra==0.17.4
+qtconsole==4.7.1
+QtPy==1.9.0
+Quandl==3.6.1
+requests==2.21.0
+requests-ntlm==1.1.0
+requests-oauthlib==1.3.0
+retworkx==0.9.0
+rsa==4.0
+scikit-image==0.15.0
+scikit-learn==0.21.3
+scipy @ file:///home/conda/feedstock_root/build_artifacts/scipy_1629411471490/work
+seaborn==0.10.0
+Send2Trash==1.5.0
+six==1.15.0
+sklearn==0.0
+sympy==1.8
+tensorboard==1.14.0
+tensorboard-data-server==0.6.1
+tensorboard-plugin-wit==1.6.0.post3
+tensorflow-estimator==1.14.0
+tensorflow-gpu==1.14.0
+termcolor==1.1.0
+terminado==0.8.3
+testpath==0.4.4
+torch==1.3.1
+tornado==6.0.4
+tqdm==4.62.3
+traitlets==4.3.3
+typing-extensions==3.7.4.3
+Unidecode==1.0.23
+urllib3==1.22
+wcwidth==0.1.8
+websocket-client==1.1.0
+Werkzeug==0.16.0
+widgetsnbextension==3.5.1
+wrapt==1.12.1
+yfinance==0.1.59
+zipp==3.1.0
+
+<<<README.md>>>
+# EDNIG: Encoder-Decoder Network with Illumination Guidance for Low-Light Image Enhancement
+
+[![Preprint](https://img.shields.io/badge/Preprint-arXiv-red)](https://arxiv.org/abs/2507.13360)
+[![IEEE](https://img.shields.io/badge/Paper-IEEE-blue)](https://ieeexplore.ieee.org/abstract/document/11474151)
+[![Weights](https://img.shields.io/badge/Weights-Hugging_Face-gold)](https://huggingface.co/tranleanh/ednig)
+
+Implementation of the paper "Low-Light Enhancement via Encoder-Decoder Network with Illumination Guidance" (ICCCE 2025).
+
+## Introduction
+### Framework Diagram
+
+<p align="center">
+<img src="docs/EDNIG.jpg" width="1000">
+</p>
+
+## Visual Examples
+
+<p align="center">
+<img src="docs/results_LOL.png" width="1000">
+</p>
+
+<p align="center">
+<img src="docs/results_realistic.png" width="1000">
+</p>
+
+## Dependencies
+Main dependencies (or equivalent):
+
+- CUDA 10.0
+- CUDNN 7.6
+- OpenCV
+- Tensorflow 1.14.0
+- Keras 2.1.3
+
+For other packages, simply run:
+```bashrc
+$ pip install -r requirements.txt
+```
+
+## Test
+Download the pre-trained weights and modify the [weight_path](https://github.com/tranleanh/ednig/blob/c80d8eb769397c69deae19114b9d9ceefd12a642/test_on_images.py#L59) and [data folder](https://github.com/tranleanh/ednig/blob/c80d8eb769397c69deae19114b9d9ceefd12a642/test_on_images.py#L70C5-L70C12) for quick test.
+```bashrc
+$ python test_on_images.py
+```
+
+
+## Train
+Refer to this [section](https://github.com/tranleanh/edn-gtm?tab=readme-ov-file#train) for training.
+```bashrc
+$ python train.py
+```
+
+## Citation
+```bibtex
+@article{tran2025low,
+  title={Low-Light Enhancement via Encoder-Decoder Network with Illumination Guidance},
+  author={Tran, Le-Anh and Tran, Chung Nguyen and Nguyen, Ngoc-Luu and Dang, Nhan Cach and Carrabina, Jordi and Castells-Rufas, David and Nguyen, Minh Son},
+  journal={arXiv preprint arXiv:2507.13360},
+  year={2025}
+}
+
+@inproceedings{tran2025low,
+  title={Low-light enhancement via encoder-decoder network with illumination guidance},
+  author={Tran, Le-Anh and Tran, Chung Nguyen and Nguyen, Ngoc-Luu and Dang, Nhan Cach and Carrabina, Jordi and Castells-Rufas, David and Nguyen, Minh Son},
+  booktitle={2025 10th International Conference on Computer and Communication Engineering (ICCCE)},
+  pages={01--06},
+  year={2025},
+  organization={IEEE}
+}
+```
+
+Have fun!
+
+LA Tran
+
+<<<core/bcp.py>>>
+import cv2
+import math
+import numpy as np
+
+
+def estimatebrightchannel(im,sz):
+	b,g,r = cv2.split(im)
+	bc = cv2.max(cv2.max(r,g),b)
+	kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(sz,sz))
+	bright = cv2.dilate(bc,kernel)
+	return bright
+
+
+def Guidedfilter(im,p,r,eps):
+	mean_I = cv2.boxFilter(im,cv2.CV_64F,(r,r))
+	mean_p = cv2.boxFilter(p, cv2.CV_64F,(r,r))
+	mean_Ip = cv2.boxFilter(im*p,cv2.CV_64F,(r,r))
+	cov_Ip = mean_Ip - mean_I*mean_p
+
+	mean_II = cv2.boxFilter(im*im,cv2.CV_64F,(r,r))
+	var_I   = mean_II - mean_I*mean_I
+
+	a = cov_Ip/(var_I + eps)
+	b = mean_p - a*mean_I
+
+	mean_a = cv2.boxFilter(a,cv2.CV_64F,(r,r))
+	mean_b = cv2.boxFilter(b,cv2.CV_64F,(r,r))
+
+	q = mean_a*im + mean_b
+	return q
+
+
+def TransmissionRefine(im,et):
+	gray = cv2.cvtColor(im,cv2.COLOR_BGR2GRAY)
+	gray = np.float64(gray)/255
+	r = 60
+	eps = 0.0001
+	t = Guidedfilter(gray,et,r,eps)
+	return t
+
+
+def normalize_img(img):
+	min_v = np.amin(img)
+	max_v = np.amax(img)
+	return (img-min_v)/(max_v-min_v)
+
+
+def estimate_illumination(src):
+
+	im = cv2.cvtColor(src, cv2.COLOR_BGR2RGB)
+
+	tmin=0.1   # minimum value for t to make J image
+	w=3       # window size, which determine the corseness of prior images
+
+	alpha=0.4  # threshold for transmission correction. range is 0.0 to 1.0. The bigger number makes darker image.
+	omega=0.75 # this is for dark channel prior. change this parameter to arrange dark_t's range. 0.0 to 1.0. bigger is brighter
+	p=0.1      # percentage to consider for atmosphere. 0.0 to 1.0
+	eps=1e-3   # for J image
+
+	I = np.asarray(im, dtype=np.float64) # Convert the input to an array.
+	I = I[:,:,:3]/255 # stackoverflow.com/questions/44955656/how-to-convert-rgb-pil-image-to-numpy-array-with-3-channels
+
+	Ibright_ch = estimatebrightchannel(I, w)
+	bright_ch_refined = TransmissionRefine(im,Ibright_ch)
+	inv_bright_ch_refined = 1 - bright_ch_refined
+	inv_bright_ch_refined = normalize_img(inv_bright_ch_refined)
+
+	return inv_bright_ch_refined
+
+<<<core/dcp.py>>>
+import cv2
+import math
+import numpy as np
+
+
+def DarkChannel(im,sz):
+    b,g,r = cv2.split(im)
+    dc = cv2.min(cv2.min(r,g),b)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(sz,sz))
+    dark = cv2.erode(dc,kernel)
+    return dark
+
+def AtmLight(im,dark):
+    [h,w] = im.shape[:2]
+    imsz = h*w
+    numpx = int(max(math.floor(imsz/1000),1))
+    darkvec = dark.reshape(imsz)
+    imvec = im.reshape(imsz,3)
+
+    indices = darkvec.argsort()
+    indices = indices[imsz-numpx::]
+
+    atmsum = np.zeros([1,3])
+    for ind in range(1,numpx):
+        atmsum = atmsum + imvec[indices[ind]]
+
+    A = atmsum / numpx
+    return A
+
+def TransmissionEstimate(im,A,sz):
+    omega = 0.95
+    im3 = np.empty(im.shape,im.dtype)
+
+    for ind in range(0,3):
+        im3[:,:,ind] = im[:,:,ind]/A[0,ind]
+
+    transmission = 1 - omega*DarkChannel(im3,sz)
+    return transmission
+
+def Guidedfilter(im,p,r,eps):
+    mean_I = cv2.boxFilter(im,cv2.CV_64F,(r,r))
+    mean_p = cv2.boxFilter(p, cv2.CV_64F,(r,r))
+    mean_Ip = cv2.boxFilter(im*p,cv2.CV_64F,(r,r))
+    cov_Ip = mean_Ip - mean_I*mean_p
+
+    mean_II = cv2.boxFilter(im*im,cv2.CV_64F,(r,r))
+    var_I   = mean_II - mean_I*mean_I
+
+    a = cov_Ip/(var_I + eps)
+    b = mean_p - a*mean_I
+
+    mean_a = cv2.boxFilter(a,cv2.CV_64F,(r,r))
+    mean_b = cv2.boxFilter(b,cv2.CV_64F,(r,r))
+
+    q = mean_a*im + mean_b
+    return q
+
+def TransmissionRefine(im,et):
+    gray = cv2.cvtColor(im,cv2.COLOR_BGR2GRAY)
+    gray = np.float64(gray)/255
+    r = 60
+    eps = 0.0001
+    t = Guidedfilter(gray,et,r,eps)
+
+    return t
+
+def Recover(im,t,A,tx = 0.1):
+    res = np.empty(im.shape,im.dtype)
+    t = cv2.max(t,tx)
+
+    for ind in range(0,3):
+        res[:,:,ind] = (im[:,:,ind]-A[0,ind])/t + A[0,ind]
+
+    return res
+
+def estimate_transmission(src):
+    I = src.astype('float64')/255
+    dark = DarkChannel(I,15)
+    A = AtmLight(I,dark)
+    te = TransmissionEstimate(I,A,15)
+    t = TransmissionRefine(src,te)
+    # J = Recover(I,t,A,0.1)
+    return t
+<<<core/losses.py>>>
+import keras.backend as K
+from keras.applications.vgg16 import VGG16
+from keras.models import Model
+import numpy as np
+
+from .networks import img_size
+
+
+# img_size = 512
+
+image_shape = (img_size, img_size, 3)
+
+
+def l2_loss(y_true, y_pred):
+    return K.mean((y_pred - y_true)**2)
+
+
+def perceptual_loss(y_true, y_pred):
+    vgg = VGG16(include_top=False, weights='imagenet', input_shape=image_shape)
+    loss_model = Model(inputs=vgg.input, outputs=vgg.get_layer('block3_conv3').output)
+    loss_model.trainable = False
+    return K.mean(K.square(loss_model(y_true) - loss_model(y_pred)))
+
+
+def wasserstein_loss(y_true, y_pred):
+    return K.mean(y_true*y_pred)
+
+
+def perceptual_and_l2_loss(y_true, y_pred):
+
+    A = 1
+    B = 10
+
+    return A*perceptual_loss(y_true, y_pred) + B*l2_loss(y_true, y_pred)
+
+<<<core/netword.py>>>
+from keras.layers import Input, Activation, Add, UpSampling2D
+from keras.layers.advanced_activations import LeakyReLU
+from keras.layers.convolutional import Conv2D
+from keras.layers.core import Dense, Flatten, Lambda
+from keras.layers.normalization import BatchNormalization
+from keras.models import Model
+from keras.layers import Concatenate, Multiply
+from keras.layers import GlobalAveragePooling2D, Reshape, Permute
+
+
+from keras.layers import GlobalAveragePooling2D, GlobalMaxPooling2D, Reshape, Dense, multiply, Permute, Concatenate, Conv2D, Add, Activation, Lambda
+from keras import backend as K
+from keras.activations import sigmoid
+
+
+from keras.layers import MaxPooling2D
+from keras.layers import Dropout, concatenate
+
+
+img_size = 512
+
+image_shape = (img_size, img_size, 4)
+image_d_shape = (img_size, img_size, 3)
+
+
+# Define Num. of Channels:
+num_filter_1st = 96
+ch_mul = 0.125
+
+
+def convolution_2d(x, num_filter=32, k_size=3, act_type="mish"):
+            
+    x = Conv2D(num_filter, k_size, padding='same', kernel_initializer = 'he_normal')(x)
+    # x = BatchNormalization()(x)
+    
+    if act_type=="mish": 
+        softplus_x = Activation('softplus')(x)
+        tanh_softplus_x = Activation('tanh')(softplus_x)
+        x = multiply([x, tanh_softplus_x])
+
+    elif act_type=="swish":
+        sigmoid_x = Activation('sigmoid')(x)
+        x = multiply([x, sigmoid_x])
+        
+    elif act_type=="leakyrelu": x = LeakyReLU(alpha=0.1)(x)
+    elif act_type=="tanh": x = Activation('tanh')(x)
+    
+    return x
+
+
+def gan_model(generator, discriminator):
+    inputs = Input(shape=image_shape)
+    generated_image = generator(inputs)
+    outputs = discriminator(generated_image)
+    model = Model(inputs=inputs, outputs=[generated_image, outputs])
+    return model
+
+
+### Generator (EDN-GIM)
+def unet_spp_swish_generator_model():
+       
+    inputs = Input(image_shape)     # H
+    
+    conv1 = convolution_2d(inputs, int(num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv1 = convolution_2d(conv1, int(num_filter_1st*ch_mul), 3,  act_type="swish")      # H
+    conv1 = convolution_2d(conv1, int(num_filter_1st*ch_mul), 3,  act_type="swish")      # H
+    pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)                # H/2
+
+    conv2 = convolution_2d(pool1, int(2*num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv2 = convolution_2d(conv2, int(2*num_filter_1st*ch_mul), 3,  act_type="swish")     # H/2
+    conv2 = convolution_2d(conv2, int(2*num_filter_1st*ch_mul), 3,  act_type="swish")     # H/2
+    pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)                # H/4
+    
+    conv3 = convolution_2d(pool2, int(4*num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv3 = convolution_2d(conv3, int(4*num_filter_1st*ch_mul), 3,  act_type="swish")     # H/4
+    conv3 = convolution_2d(conv3, int(4*num_filter_1st*ch_mul), 3,  act_type="swish")     # H/4
+    pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)                # H/8
+    
+    conv4 = convolution_2d(pool3, int(8*num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv4 = convolution_2d(conv4, int(8*num_filter_1st*ch_mul), 3,  act_type="swish")     # H/8
+    conv4 = convolution_2d(conv4, int(8*num_filter_1st*ch_mul), 3,  act_type="swish")     # H/8
+    drop4 = Dropout(0.5)(conv4) 
+    pool4 = MaxPooling2D(pool_size=(2, 2))(drop4)                # H/16
+    
+    conv5 = convolution_2d(pool4, int(16*num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv5 = convolution_2d(conv5, int(16*num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv5 = convolution_2d(conv5, int(16*num_filter_1st*ch_mul), 3,  act_type="swish")
+    
+    # SPP #
+    conv5 = convolution_2d(conv5, int(8*num_filter_1st*ch_mul), 1, act_type="swish")
+    
+    conv5 = concatenate([conv5,
+                         MaxPooling2D(pool_size=(13, 13), strides=1, padding='same')(conv5),
+                         MaxPooling2D(pool_size=(9, 9), strides=1, padding='same')(conv5),
+                         MaxPooling2D(pool_size=(5, 5), strides=1, padding='same')(conv5)], axis = 3)
+
+    conv5 = convolution_2d(conv5, int(16*num_filter_1st*ch_mul), 1, act_type="swish")     # H/16
+    drop5 = Dropout(0.5)(conv5)
+
+    up6 = convolution_2d((UpSampling2D(size = (2,2))(drop5)), int(8*num_filter_1st*ch_mul), 2, act_type="swish")
+    merge6 = concatenate([drop4,up6], axis = 3)
+    conv6 = convolution_2d(merge6, int(8*num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv6 = convolution_2d(conv6, int(8*num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv6 = convolution_2d(conv6, int(8*num_filter_1st*ch_mul), 3,  act_type="swish")
+    
+    up7 = convolution_2d((UpSampling2D(size = (2,2))(conv6)), int(4*num_filter_1st*ch_mul), 2, act_type="swish")
+    merge7 = concatenate([conv3,up7], axis = 3)
+    conv7 = convolution_2d(merge7, int(4*num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv7 = convolution_2d(conv7, int(4*num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv7 = convolution_2d(conv7, int(4*num_filter_1st*ch_mul), 3,  act_type="swish")
+   
+    up8 = convolution_2d((UpSampling2D(size = (2,2))(conv7)), int(2*num_filter_1st*ch_mul), 2, act_type="swish")
+    merge8 = concatenate([conv2,up8], axis = 3)
+    conv8 = convolution_2d(merge8, int(2*num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv8 = convolution_2d(conv8, int(2*num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv8 = convolution_2d(conv8, int(2*num_filter_1st*ch_mul), 3,  act_type="swish")
+
+    up9 = convolution_2d((UpSampling2D(size = (2,2))(conv8)), int(num_filter_1st*ch_mul), 2, act_type="swish")
+    merge9 = concatenate([conv1,up9], axis = 3)
+    conv9 = convolution_2d(merge9, int(num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv9 = convolution_2d(conv9, int(num_filter_1st*ch_mul), 3,  act_type="swish")
+    conv9 = convolution_2d(conv9, int(num_filter_1st*ch_mul), 3,  act_type="swish")
+    
+    conv10 = Conv2D(3, 1, activation = 'tanh')(conv9)
+
+    model = Model(inputs=inputs, outputs=conv10)
+    return model
+
+
+## Discriminator (Critic)
+def unet_encoder_discriminator_model():
+    
+    inputs = Input(shape=image_d_shape)
+    
+    conv1 = Conv2D(int(num_filter_1st*ch_mul), 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(inputs)
+    conv1 = Conv2D(int(num_filter_1st*ch_mul), 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv1)
+    pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
+    
+    conv2 = Conv2D(int(2*num_filter_1st*ch_mul), 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool1)
+    conv2 = Conv2D(int(2*num_filter_1st*ch_mul), 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv2)
+    pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
+    
+    conv3 = Conv2D(int(4*num_filter_1st*ch_mul), 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool2)
+    conv3 = Conv2D(int(4*num_filter_1st*ch_mul), 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv3)
+    pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
+    
+    conv4 = Conv2D(int(8*num_filter_1st*ch_mul), 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool3)
+    conv4 = Conv2D(int(8*num_filter_1st*ch_mul), 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv4)
+    drop4 = Dropout(0.5)(conv4)
+    pool4 = MaxPooling2D(pool_size=(2, 2))(drop4)
+
+    conv5 = Conv2D(int(16*num_filter_1st*ch_mul), 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool4)
+    conv5 = Conv2D(int(16*num_filter_1st*ch_mul), 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv5)
+    drop5 = Dropout(0.5)(conv5)
+
+    x = GlobalAveragePooling2D()(drop5)
+    x = Dense(128)(x)
+    x = LeakyReLU(alpha=0.1)(x)
+    x = Dense(1, activation='sigmoid')(x)
+
+    model = Model(inputs=inputs, outputs=x, name='Discriminator')
+    return model
+<<<core/utils.py>>>
+import os
+from PIL import Image
+import numpy as np
+import cv2
+from random import randint
+# from .dcp import estimate_transmission
+from .bcp import estimate_illumination
+
+from .networks import img_size
+from tqdm import tqdm
+
+
+
+RESHAPE = (img_size,img_size)
+
+def is_an_image_file(filename):
+    IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', 'bmp']
+    for ext in IMAGE_EXTENSIONS:
+        if ext in filename:
+            return True
+    return False
+
+
+def list_image_files(directory):
+    files = sorted(os.listdir(directory))
+    return [os.path.join(directory, f) for f in files if is_an_image_file(f)]
+
+
+def load_image(path):
+    img = Image.open(path)
+    return img
+
+
+def preprocess_image(cv_img):
+    cv_img = cv_img.resize(RESHAPE)
+    img = np.array(cv_img)
+    img = (img - 127.5) / 127.5
+    return img
+
+
+def deprocess_image(img):
+    img = img * 127.5 + 127.5
+    return img.astype('uint8')
+
+
+def save_image(np_arr, path):
+    img = np_arr * 127.5 + 127.5
+    im = Image.fromarray(img)
+    im.save(path)
+
+
+def load_images(path, n_images):
+    if n_images < 0:
+        n_images = float("inf")
+    A_paths, B_paths = os.path.join(path, 'A'), os.path.join(path, 'B')
+    all_A_paths, all_B_paths = list_image_files(A_paths), list_image_files(B_paths)
+    images_A, images_B = [], []
+    images_A_paths, images_B_paths = [], []
+    cnt=0
+    for path_A, path_B in zip(all_A_paths, all_B_paths):
+        img_A, img_B = load_image(path_A), load_image(path_B)
+        images_A.append(preprocess_image(img_A))
+        images_B.append(preprocess_image(img_B))
+        images_A_paths.append(path_A)
+        images_B_paths.append(path_B)
+        cnt+=1
+        print(cnt, n_images)
+        if len(images_A) > n_images - 1: break
+
+    return {
+        'A': np.array(images_A),
+        'A_paths': np.array(images_A_paths),
+        'B': np.array(images_B),
+        'B_paths': np.array(images_B_paths)
+    }
+
+
+def preprocess_cv2_image(cv_img):
+    cv_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+    cv_img = cv2.resize(cv_img, RESHAPE)
+    img = np.array(cv_img)
+    img = (img - 127.5) / 127.5
+    return img
+
+
+def preprocess_depth_img(cv_img):
+    cv_img = cv2.resize(cv_img, RESHAPE)
+    img = np.array(cv_img)
+    img = np.reshape(img, (RESHAPE[0], RESHAPE[1], 1))
+    img = 2*(img - 0.5)
+    return img
+
+
+def preprocess_image_cv2_rancrop(img_A, img_B):
+
+    t = estimate_transmission(img_A)
+
+    img_A = cv2.cvtColor(img_A, cv2.COLOR_BGR2RGB)
+    img_B = cv2.cvtColor(img_B, cv2.COLOR_BGR2RGB)
+
+    h, w, _ = img_A.shape
+
+    min_wh = np.amin([h, w])
+
+    # crop_sizes = [1600, 1800, 2000, 2200, 2400]
+    crop_sizes = [int(min_wh*0.4), int(min_wh*0.5), int(min_wh*0.6), int(min_wh*0.7), int(min_wh*0.8)]
+
+    images_A = []
+    images_B = []
+
+    for crop_size in crop_sizes:
+
+        x1, y1 = randint(1, w-crop_size-1), randint(1, h-crop_size-1)
+
+        cropA = img_A[y1:y1+crop_size,x1:x1+int(crop_size/h*w)]
+        cropA = cv2.resize(cropA, (RESHAPE))
+        cropA = np.array(cropA)
+        cropA = (cropA - 127.5) / 127.5
+
+        crop_t = t[y1:y1+crop_size,x1:x1+int(crop_size/h*w)]
+        crop_t = preprocess_depth_img(crop_t)
+
+        cropA = np.concatenate((cropA, crop_t), axis=2)
+
+        cropB = img_B[y1:y1+crop_size,x1:x1+int(crop_size/h*w)]
+        cropB = cv2.resize(cropB, (RESHAPE))
+        cropB = np.array(cropB)
+        cropB = (cropB - 127.5) / 127.5
+
+        images_A.append(cropA)
+        images_B.append(cropB)
+
+    img_A = cv2.resize(img_A, (RESHAPE))
+    img_A = np.array(img_A)
+    img_A = (img_A - 127.5) / 127.5
+
+    t = preprocess_depth_img(t)
+
+    img_A = np.concatenate((img_A, t), axis=2)
+
+    img_B = cv2.resize(img_B, (RESHAPE))
+    img_B = np.array(img_B)
+    img_B = (img_B - 127.5) / 127.5
+
+    images_A.append(img_A)
+    images_B.append(img_B)
+
+    return images_A, images_B
+
+
+
+def load_images_with_crop_data_aug(path, n_images):
+    if n_images < 0:
+        n_images = float("inf")
+    A_paths, B_paths = os.path.join(path, 'A'), os.path.join(path, 'B')
+    all_A_paths, all_B_paths = list_image_files(A_paths), list_image_files(B_paths)
+    images_A, images_B = [], []
+    images_A_paths, images_B_paths = [], []
+    cnt=0
+    for path_A, path_B in zip(all_A_paths, all_B_paths):
+
+        img_A, img_B = cv2.imread(path_A), cv2.imread(path_B)
+
+        processed_imgs_A, processed_imgs_B = preprocess_image_cv2_rancrop(img_A, img_B)
+
+        for imgA in processed_imgs_A: images_A.append(imgA)
+        for imgB in processed_imgs_B: images_B.append(imgB)
+
+        images_A_paths.append(path_A)
+        images_B_paths.append(path_B)
+
+        cnt+=1
+        print(cnt, n_images)
+        if len(images_A_paths) > n_images - 1: break
+
+    return {
+        'A': np.array(images_A),
+        'A_paths': np.array(images_A_paths),
+        'B': np.array(images_B),
+        'B_paths': np.array(images_B_paths)
+    }
+
+
+def preprocess_image_cv2_rancrop_flip(img_A, img_B):
+
+    # t = estimate_transmission(img_A)
+    t = estimate_illumination(img_A)
+    t_flip = cv2.flip(t, 1)
+
+    img_A = cv2.cvtColor(img_A, cv2.COLOR_BGR2RGB)
+    img_B = cv2.cvtColor(img_B, cv2.COLOR_BGR2RGB)
+
+    img_A_flip = cv2.flip(img_A, 1)
+    img_B_flip = cv2.flip(img_B, 1)
+
+    h, w, _ = img_A.shape
+
+    min_wh = np.amin([h, w])
+
+    # crop_sizes = [int(min_wh*0.4), int(min_wh*0.5), int(min_wh*0.6), int(min_wh*0.7), int(min_wh*0.8)]
+    crop_sizes = []
+
+
+    images_A = []
+    images_B = []
+
+    for crop_size in crop_sizes:
+
+        x1, y1 = randint(1, w-crop_size-1), randint(1, h-crop_size-1)
+
+        # Original
+
+        cropA = img_A[y1:y1+crop_size,x1:x1+int(crop_size/h*w)]
+        cropA = cv2.resize(cropA, (RESHAPE))
+        cropA = np.array(cropA)
+        cropA = (cropA - 127.5) / 127.5
+
+        crop_t = t[y1:y1+crop_size,x1:x1+int(crop_size/h*w)]
+        crop_t = preprocess_depth_img(crop_t)
+
+        cropA = np.concatenate((cropA, crop_t), axis=2)
+
+        cropB = img_B[y1:y1+crop_size,x1:x1+int(crop_size/h*w)]
+        cropB = cv2.resize(cropB, (RESHAPE))
+        cropB = np.array(cropB)
+        cropB = (cropB - 127.5) / 127.5
+
+        images_A.append(cropA)
+        images_B.append(cropB)
+
+
+        # Horizontal Flip
+
+        cropA = img_A_flip[y1:y1+crop_size,x1:x1+int(crop_size/h*w)]
+        cropA = cv2.resize(cropA, (RESHAPE))
+        cropA = np.array(cropA)
+        cropA = (cropA - 127.5) / 127.5
+
+        crop_t = t_flip[y1:y1+crop_size,x1:x1+int(crop_size/h*w)]
+        crop_t = preprocess_depth_img(crop_t)
+
+        cropA = np.concatenate((cropA, crop_t), axis=2)
+
+        cropB = img_B_flip[y1:y1+crop_size,x1:x1+int(crop_size/h*w)]
+        cropB = cv2.resize(cropB, (RESHAPE))
+        cropB = np.array(cropB)
+        cropB = (cropB - 127.5) / 127.5
+
+        images_A.append(cropA)
+        images_B.append(cropB)
+
+
+    # Original
+
+    img_A = cv2.resize(img_A, (RESHAPE))
+    img_A = np.array(img_A)
+    img_A = (img_A - 127.5) / 127.5
+
+    t = preprocess_depth_img(t)
+
+    img_A = np.concatenate((img_A, t), axis=2)
+
+    img_B = cv2.resize(img_B, (RESHAPE))
+    img_B = np.array(img_B)
+    img_B = (img_B - 127.5) / 127.5
+
+    images_A.append(img_A)
+    images_B.append(img_B)
+
+
+    # # Horizontal Flip
+
+    # img_A = cv2.resize(img_A_flip, (RESHAPE))
+    # img_A = np.array(img_A)
+    # img_A = (img_A - 127.5) / 127.5
+
+    # t = preprocess_depth_img(t_flip)
+
+    # img_A = np.concatenate((img_A, t), axis=2)
+
+    # img_B = cv2.resize(img_B_flip, (RESHAPE))
+    # img_B = np.array(img_B)
+    # img_B = (img_B - 127.5) / 127.5
+
+    # images_A.append(img_A)
+    # images_B.append(img_B)
+
+    return images_A, images_B
+
+
+
+def load_images_with_crop_flip_data_aug(path, n_images):
+    if n_images < 0:
+        n_images = float("inf")
+    A_paths, B_paths = os.path.join(path, 'A'), os.path.join(path, 'B')
+    all_A_paths, all_B_paths = list_image_files(A_paths), list_image_files(B_paths)
+    images_A, images_B = [], []
+    images_A_paths, images_B_paths = [], []
+    cnt=0
+
+    print('\n Loading & augmenting training data:')
+
+    for path_A, path_B in tqdm(zip(all_A_paths, all_B_paths), total=len(all_A_paths)):
+
+        img_A, img_B = cv2.imread(path_A), cv2.imread(path_B)
+
+        img_A = cv2.resize(img_A, RESHAPE)
+        img_B = cv2.resize(img_B, RESHAPE)
+
+        processed_imgs_A, processed_imgs_B = preprocess_image_cv2_rancrop_flip(img_A, img_B)
+
+        for imgA in processed_imgs_A: images_A.append(imgA)
+        for imgB in processed_imgs_B: images_B.append(imgB)
+
+        images_A_paths.append(path_A)
+        images_B_paths.append(path_B)
+
+        cnt+=1
+        # print(cnt, n_images)
+        if len(images_A_paths) > n_images - 1: break
+
+    return {
+        'A': np.array(images_A),
+        'A_paths': np.array(images_A_paths),
+        'B': np.array(images_B),
+        'B_paths': np.array(images_B_paths)
+    }
