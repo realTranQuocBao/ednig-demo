@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EDNIG — Tăng cường ảnh thiếu sáng</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">✦</span>
+      <div>
+        <h1>EDNIG</h1>
+        <p>Low-Light Image Enhancement via Encoder-Decoder Network with Illumination Guidance</p>
+      </div>
+    </div>
+    <div class="status">
+      Chế độ:
+      {% if mode == "model" %}
+        <span class="badge badge-ok">Model đã train</span>
+      {% else %}
+        <span class="badge badge-warn">Fallback (chưa có model)</span>
+      {% endif %}
+    </div>
+  </header>
+
+  <main>
+    <section class="paper-card">
+      <div class="paper-row">
+        <div class="paper-col">
+          <h3>📄 Bài báo gốc</h3>
+          <p class="paper-title">
+            "Low-Light Enhancement via Encoder-Decoder Network with Illumination Guidance"
+          </p>
+          <p class="paper-authors">
+            Le-Anh Tran, Chung Nguyen Tran, Ngoc-Luu Nguyen, Nhan Cach Dang,
+            Jordi Carrabina, David Castells-Rufas, Minh Son Nguyen
+          </p>
+          <p class="paper-venue">
+            2025 10th International Conference on Computer and Communication Engineering (ICCCE 2025), IEEE
+          </p>
+          <div class="paper-actions">
+            <a href="{{ paper.original_pdf }}" target="_blank" class="link-btn">📕 Đọc PDF gốc (tiếng Anh)</a>
+            <a href="{{ paper.arxiv }}" target="_blank" class="link-btn ghost-link">arXiv:2507.13360</a>
+            <a href="{{ paper.ieee }}" target="_blank" class="link-btn ghost-link">IEEE Xplore</a>
+            <a href="{{ paper.github }}" target="_blank" class="link-btn ghost-link">GitHub</a>
+          </div>
+        </div>
+        <div class="paper-col">
+          <h3>🇻🇳 Bản dịch tiếng Việt</h3>
+          <p class="paper-title">
+            "Tăng cường ảnh thiếu sáng bằng mạng Encoder–Decoder với hướng dẫn chiếu sáng (EDNIG)"
+          </p>
+          <p class="paper-authors">
+            Biên soạn và trình bày lại bằng tiếng Việt bởi:<br />
+            <strong>Trần Quốc Bảo</strong> (MSHV 2480101829) — học viên cao học NLP Lab
+          </p>
+          <p class="paper-venue">
+            Báo cáo môn Xử lý Ngôn ngữ Tự nhiên — phiên bản 2
+          </p>
+          <div class="paper-actions">
+            <a href="{{ paper.vietnamese_pdf }}" target="_blank" class="link-btn">📗 Đọc PDF tiếng Việt</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="drop-zone" class="drop-zone" tabindex="0" aria-label="Khu vực kéo thả ảnh">
+      <div class="dz-inner">
+        <div class="dz-icon">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M12 16V4m0 0l-4 4m4-4l4 4" />
+            <rect x="4" y="14" width="16" height="6" rx="2" />
+          </svg>
+        </div>
+        <h2>Kéo thả ảnh thiếu sáng vào đây</h2>
+        <p>hoặc bấm để chọn từ máy. PNG / JPG / WEBP, tối đa {{ max_mb }} MB.</p>
+        <button type="button" id="pick-btn" class="primary">Chọn ảnh</button>
+        <input type="file" id="file-input" accept="image/png,image/jpeg,image/jpg,image/webp,image/bmp" hidden />
+      </div>
+    </section>
+
+    <section id="result-section" class="result hidden">
+      <div class="result-toolbar">
+        <div class="meta">
+          <span id="meta-size"></span>
+          <span class="dot">•</span>
+          <span id="meta-mode"></span>
+          <span class="dot">•</span>
+          <span id="meta-time"></span>
+        </div>
+        <div class="actions">
+          <a id="download-png" class="primary" href="#" download>Tải PNG chất lượng cao</a>
+          <a id="download-jpg" class="ghost" href="#" download>Tải JPG (95)</a>
+          <button id="reset-btn" type="button" class="ghost">Ảnh khác</button>
+        </div>
+      </div>
+
+      <div class="compare" id="compare" aria-label="So sánh trước và sau">
+        <img id="img-after" alt="Ảnh sau khi tăng cường" />
+        <div class="before-wrap" id="before-wrap">
+          <img id="img-before" alt="Ảnh thiếu sáng gốc" />
+        </div>
+        <input type="range" id="slider" min="0" max="100" value="50" aria-label="Trượt để so sánh" />
+        <div class="handle" id="handle">
+          <span>‹‹</span><span>››</span>
+        </div>
+        <div class="label label-before">Trước</div>
+        <div class="label label-after">Sau</div>
+      </div>
+    </section>
+
+    <section id="error-box" class="error hidden"></section>
+  </main>
+
+  <div id="loading" class="loading hidden">
+    <div class="spinner"></div>
+    <p>Đang tăng cường ảnh…</p>
+  </div>
+
+  <footer>
+    <p>
+      <strong>Tác giả:</strong> Tran et al. (ICCCE 2025) ·
+      <strong>Người dịch:</strong> Trần Quốc Bảo (2480101829) ·
+      <strong>Port PyTorch + Web app:</strong> báo cáo cao học NLP Lab
+    </p>
+  </footer>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

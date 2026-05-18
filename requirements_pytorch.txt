@@ -1,0 +1,16 @@
+# Modernized requirements for the PyTorch port + Flask web app.
+#
+# For GPU training, install a torch build matching your CUDA, e.g.:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#
+# CPU-only (web app inference, slow training):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+numpy>=1.23
+opencv-python>=4.8
+Pillow>=9.5
+tqdm>=4.65
+flask>=3.0
+# torch/torchvision are installed separately above to match the CUDA version.
+torch>=2.1
+torchvision>=0.16
