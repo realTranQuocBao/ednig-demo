@@ -107,6 +107,23 @@ def _new_run_id():
     return f"{ts}_{sid}"
 
 
+def _read_live_model_info():
+    """Always read ednig_model_info.json fresh from disk.
+
+    Training rewrites this file every time a new best epoch is found, so the
+    web app must re-read on each page load — caching at startup would show
+    stale info.
+    """
+    info_path = ROOT / "weights" / "ednig_model_info.json"
+    if not info_path.exists():
+        return ENHANCER.info  # fall back to whatever was loaded at startup
+    try:
+        with open(info_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return ENHANCER.info
+
+
 def _safe_run_path(run_id: str) -> Path:
     """Resolve a run folder safely (defends against path traversal)."""
     target = (HISTORY_DIR / run_id).resolve()
@@ -184,7 +201,7 @@ def index():
         max_mb=MAX_UPLOAD_MB,
         paper=paper_links,
         history_count=history_count,
-        model_info=ENHANCER.info,  # may be None
+        model_info=_read_live_model_info(),  # always fresh from disk
     )
 
 
@@ -218,7 +235,7 @@ def api_status():
         "max_upload_mb": MAX_UPLOAD_MB,
         "history_dir": str(HISTORY_DIR),
         "max_history": MAX_HISTORY,
-        "model_info": ENHANCER.info,
+        "model_info": _read_live_model_info(),
     })
 
 
