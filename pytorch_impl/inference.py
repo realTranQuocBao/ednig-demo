@@ -7,6 +7,7 @@ Two paths:
 """
 from __future__ import annotations
 
+import json
 import os
 import cv2
 import numpy as np
@@ -43,9 +44,11 @@ class EDNIGEnhancer:
         self.model = None
         self.weights_path = weights_path
         self.device = None
+        self.info = None       # populated from sidecar JSON if available
         self._requested_device = device
         if weights_path and os.path.isfile(weights_path):
             self._load(weights_path)
+            self._load_info(weights_path)
 
     def has_weights(self):
         return self.model is not None
@@ -64,6 +67,22 @@ class EDNIGEnhancer:
         net.load_state_dict(state)
         net.eval().to(self.device)
         self.model = net
+
+    def _load_info(self, weights_path):
+        """Look for a sidecar JSON next to the checkpoint."""
+        wp = os.path.dirname(os.path.abspath(weights_path)) or "."
+        candidates = [
+            os.path.join(wp, "ednig_model_info.json"),
+            weights_path.replace(".pt", ".json"),
+        ]
+        for c in candidates:
+            if os.path.isfile(c):
+                try:
+                    with open(c, "r", encoding="utf-8") as f:
+                        self.info = json.load(f)
+                    break
+                except (OSError, json.JSONDecodeError):
+                    pass
 
     def enhance(self, bgr):
         if self.model is None:

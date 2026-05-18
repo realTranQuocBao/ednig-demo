@@ -66,6 +66,77 @@
       </div>
     </section>
 
+    {% if model_info %}
+    <section class="model-card">
+      <div class="model-card-head">
+        <div>
+          <h3>🤖 Thông tin model đang dùng</h3>
+          <p class="muted">Checkpoint <code>{{ model_info.checkpoint }}</code> — được lưu lúc <strong>{{ model_info.saved_at }}</strong></p>
+        </div>
+        <span class="badge badge-ok">Active</span>
+      </div>
+      <div class="model-grid">
+        <div class="model-stat">
+          <span class="ms-label">Epoch best</span>
+          <span class="ms-value">{{ model_info.epoch }}<span class="muted">/{{ model_info.total_epochs_planned }}</span></span>
+        </div>
+        <div class="model-stat">
+          <span class="ms-label">Best content loss</span>
+          <span class="ms-value">{{ "%.4f"|format(model_info.best_mean_content_loss) }}</span>
+        </div>
+        <div class="model-stat">
+          <span class="ms-label">G / D loss (epoch)</span>
+          <span class="ms-value">{{ "%.3f"|format(model_info.epoch_mean_g_loss) }} / {{ "%.3f"|format(model_info.epoch_mean_d_loss) }}</span>
+        </div>
+        <div class="model-stat">
+          <span class="ms-label">Train time đã chạy</span>
+          <span class="ms-value">{{ model_info.elapsed_human }}</span>
+        </div>
+        <div class="model-stat">
+          <span class="ms-label">Image size</span>
+          <span class="ms-value">{{ model_info.hyperparameters.img_size }}×{{ model_info.hyperparameters.img_size }}</span>
+        </div>
+        <div class="model-stat">
+          <span class="ms-label">Batch / Critic updates</span>
+          <span class="ms-value">{{ model_info.hyperparameters.batch_size }} / {{ model_info.hyperparameters.critic_updates }}</span>
+        </div>
+        <div class="model-stat">
+          <span class="ms-label">LR khởi đầu / hiện tại</span>
+          <span class="ms-value">{{ "%.1e"|format(model_info.hyperparameters.lr_initial) }} → {{ "%.1e"|format(model_info.learning_rate_at_save) }}</span>
+        </div>
+        <div class="model-stat">
+          <span class="ms-label">Device train</span>
+          <span class="ms-value">{{ model_info.device }}</span>
+        </div>
+        <div class="model-stat">
+          <span class="ms-label">PyTorch</span>
+          <span class="ms-value">{{ model_info.torch_version }}</span>
+        </div>
+        <div class="model-stat">
+          <span class="ms-label">Dataset</span>
+          <span class="ms-value">{{ model_info.dataset.name }} ({{ model_info.dataset.training_samples }} ảnh)</span>
+        </div>
+      </div>
+      <details class="model-details">
+        <summary>Xem chi tiết kiến trúc + augmentation + công thức loss</summary>
+        <div class="model-details-body">
+          <p><strong>Generator:</strong> {{ model_info.architecture.generator }}</p>
+          <p><strong>Discriminator:</strong> {{ model_info.architecture.discriminator }}</p>
+          <p><strong>Content loss:</strong> <code>{{ model_info.hyperparameters.content_loss_formula }}</code></p>
+          <p><strong>Generator loss:</strong> <code>{{ model_info.hyperparameters.generator_loss_weight }} × content + {{ model_info.hyperparameters.adversarial_loss_weight }} × adversarial</code></p>
+          <p><strong>Optimizer:</strong> {{ model_info.hyperparameters.optimizer }}</p>
+          <p><strong>Augmentation:</strong>
+            crop [{{ model_info.hyperparameters.augmentation.random_crop_scale[0] }}, {{ model_info.hyperparameters.augmentation.random_crop_scale[1] }}],
+            hflip {{ model_info.hyperparameters.augmentation.horizontal_flip_prob }},
+            vflip {{ model_info.hyperparameters.augmentation.vertical_flip_prob }},
+            rot90 {{ model_info.hyperparameters.augmentation.rot90_prob }},
+            jitter {{ model_info.hyperparameters.augmentation.photometric_jitter_prob }}
+          </p>
+        </div>
+      </details>
+    </section>
+    {% endif %}
+
     <section id="drop-zone" class="drop-zone" tabindex="0" aria-label="Khu vực kéo thả ảnh">
       <div class="dz-inner">
         <div class="dz-icon">

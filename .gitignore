@@ -66,3 +66,13 @@ nul
 data/*
 # Web app saved run history (input/output PNGs per enhance call)
 webapp/history/
+# Trained model weights (download/train separately)
+weights/
+!weights/.gitkeep
+
+# Temp output dir from training
+weights/g/
+weights/d/
+
+# IDE-specific (already covered but for emphasis)
+*.code-workspace

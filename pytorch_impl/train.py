@@ -13,8 +13,10 @@ This mirrors the original paper recipe:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -36,8 +38,12 @@ def parse_args():
     p.add_argument("--critic-updates", type=int, default=5)
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--save-dir", type=str, default="./weights")
-    p.add_argument("--save-every", type=int, default=5,
-                   help="Save checkpoint every N epochs.")
+    p.add_argument("--save-every", type=int, default=1,
+                   help="Update latest/best checkpoint every N epochs (default 1).")
+    p.add_argument("--keep-numbered", action="store_true",
+                   help="Also save numbered per-epoch snapshots (generator_epNNN.pt). "
+                        "Disabled by default to keep disk usage minimal — only "
+                        "ednig_generator_latest.pt and ednig_generator_best.pt are kept.")
     p.add_argument("--num-workers", type=int, default=2)
     p.add_argument("--resume-g", type=str, default="",
                    help="Optional path to generator .pt to resume from.")
@@ -55,8 +61,7 @@ def main():
         print("[WARN] CUDA requested but not available, falling back to CPU.")
 
     save_dir = Path(args.save_dir)
-    (save_dir / "g").mkdir(parents=True, exist_ok=True)
-    (save_dir / "d").mkdir(parents=True, exist_ok=True)
+    save_dir.mkdir(parents=True, exist_ok=True)
 
     # Data
     ds = LOLDataset(args.data, split="train", img_size=args.img_size, augment=True)
@@ -94,6 +99,8 @@ def main():
     label_fake = -torch.ones(args.batch_size, 1, device=device)
 
     g_weight, c_weight = 100.0, 1.0
+    best_content = float("inf")
+    train_start = datetime.now()
 
     for epoch in range(1, args.epochs + 1):
         # Linear LR decay
@@ -104,7 +111,7 @@ def main():
             pg["lr"] = lr_now
 
         t0 = time.time()
-        d_losses, g_losses = [], []
+        d_losses, g_losses, c_losses = [], [], []
         G.train(); D.train()
         for step, (inp, tgt) in enumerate(loader):
             inp = inp.to(device, non_blocking=True)
@@ -138,6 +145,7 @@ def main():
             loss_g.backward()
             opt_g.step()
             g_losses.append(loss_g.item())
+            c_losses.append(loss_g_content.item())
 
             if (step + 1) % 25 == 0:
                 print(
@@ -154,15 +162,80 @@ def main():
             f"D_loss={mean_d:.4f} G_loss={mean_g:.4f} time={dt:.1f}s"
         )
 
-        # Save checkpoints
-        if epoch % args.save_every == 0 or epoch == args.epochs:
-            g_path = save_dir / "g" / f"generator_ep{epoch:03d}.pt"
-            d_path = save_dir / "d" / f"discriminator_ep{epoch:03d}.pt"
-            torch.save(G.state_dict(), g_path)
-            torch.save(D.state_dict(), d_path)
-            # Always overwrite a 'latest' convenience file
-            torch.save(G.state_dict(), save_dir / "ednig_generator_latest.pt")
-            print(f"  [SAVED] {g_path.name}, {d_path.name}")
+        # Only save when this epoch is the best so far (lowest mean content loss).
+        mean_content = sum(c_losses) / max(1, len(c_losses))
+        is_best = mean_content < best_content
+        if is_best:
+            best_content = mean_content
+            now = datetime.now()
+            elapsed = (now - train_start).total_seconds()
+            torch.save(G.state_dict(), save_dir / "ednig_generator_best.pt")
+            torch.save(D.state_dict(), save_dir / "ednig_discriminator_best.pt")
+
+            # Sidecar metadata so the web app (and humans) can read it.
+            info = {
+                "model_name": "EDNIG (Encoder-Decoder Network with Illumination Guidance)",
+                "checkpoint": "ednig_generator_best.pt",
+                "saved_at": now.isoformat(timespec="seconds"),
+                "training_started_at": train_start.isoformat(timespec="seconds"),
+                "elapsed_seconds_so_far": int(elapsed),
+                "elapsed_human": f"{int(elapsed // 3600)}h {int((elapsed % 3600) // 60)}m",
+                "epoch": epoch,
+                "total_epochs_planned": args.epochs,
+                "best_mean_content_loss": float(mean_content),
+                "epoch_mean_g_loss": float(mean_g),
+                "epoch_mean_d_loss": float(mean_d),
+                "epoch_time_seconds": round(dt, 2),
+                "learning_rate_at_save": lr_now,
+                "hyperparameters": {
+                    "img_size": args.img_size,
+                    "batch_size": args.batch_size,
+                    "critic_updates": args.critic_updates,
+                    "lr_initial": args.lr,
+                    "generator_loss_weight": g_weight,
+                    "adversarial_loss_weight": c_weight,
+                    "content_loss_formula": "1.0 * perceptual_vgg16_block3 + 10.0 * L2",
+                    "optimizer": "Adam(betas=(0.9, 0.999), eps=1e-8) with linear LR decay",
+                    "augmentation": {
+                        "random_crop_scale": [0.5, 1.0],
+                        "horizontal_flip_prob": 0.5,
+                        "vertical_flip_prob": 0.2,
+                        "rot90_prob": 0.3,
+                        "photometric_jitter_prob": 0.15,
+                    },
+                },
+                "architecture": {
+                    "generator": "U-Net + SPP + Swish, 4-ch input (RGB + BCP illumination)",
+                    "discriminator": "U-Net encoder + GAP + Dense + Sigmoid",
+                },
+                "device": str(device),
+                "torch_version": torch.__version__,
+                "dataset": {
+                    "name": "LOL (Low-Light)",
+                    "root": str(args.data),
+                    "training_samples": len(ds),
+                },
+                "paper": {
+                    "title": "Low-Light Enhancement via Encoder-Decoder Network with Illumination Guidance",
+                    "venue": "ICCCE 2025, IEEE",
+                    "authors": [
+                        "Le-Anh Tran", "Chung Nguyen Tran", "Ngoc-Luu Nguyen",
+                        "Nhan Cach Dang", "Jordi Carrabina", "David Castells-Rufas",
+                        "Minh Son Nguyen",
+                    ],
+                    "arxiv": "https://arxiv.org/abs/2507.13360",
+                },
+                "translator": {
+                    "name": "Tran Quoc Bao",
+                    "id": "2480101829",
+                    "note": "Bien soan ban tieng Viet va port PyTorch + Web app",
+                },
+            }
+            with open(save_dir / "ednig_model_info.json", "w", encoding="utf-8") as f:
+                json.dump(info, f, indent=2, ensure_ascii=False)
+
+            print(f"  [SAVED BEST] epoch={epoch} content={mean_content:.4f} elapsed={info['elapsed_human']}")
+        # else: skip saving entirely -- only the best is kept.
 
     print("[DONE] Training complete.")
 

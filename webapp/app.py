@@ -36,8 +36,8 @@ from pytorch_impl.inference import EDNIGEnhancer, classical_illumination_enhance
 MAX_UPLOAD_MB = 25
 ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 DEFAULT_WEIGHTS_CANDIDATES = [
-    ROOT / "weights" / "ednig_generator_latest.pt",
-    ROOT / "weights" / "ednig_generator_best.pt",
+    ROOT / "weights" / "ednig_generator_best.pt",    # preferred
+    ROOT / "weights" / "ednig_generator_latest.pt",  # legacy fallback
     ROOT / "weights" / "generator.pt",
 ]
 INFER_SIZE = int(os.environ.get("EDNIG_INFER_SIZE", "512"))
@@ -184,6 +184,7 @@ def index():
         max_mb=MAX_UPLOAD_MB,
         paper=paper_links,
         history_count=history_count,
+        model_info=ENHANCER.info,  # may be None
     )
 
 
@@ -217,6 +218,7 @@ def api_status():
         "max_upload_mb": MAX_UPLOAD_MB,
         "history_dir": str(HISTORY_DIR),
         "max_history": MAX_HISTORY,
+        "model_info": ENHANCER.info,
     })
 
 
