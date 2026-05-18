@@ -267,11 +267,16 @@ def api_enhance():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
+    # Optional mode override from form: "auto" | "single" | "tiled"
+    enhance_mode = request.form.get("mode", "auto").lower()
+    if enhance_mode not in ("auto", "single", "tiled"):
+        enhance_mode = "auto"
+
     t0 = time.time()
     try:
         if ENHANCER.has_weights():
-            out_bgr = ENHANCER.enhance(bgr)
-            used = "model"
+            out_bgr = ENHANCER.enhance(bgr, mode=enhance_mode)
+            used = f"model:{enhance_mode}"
         else:
             out_bgr = classical_illumination_enhance(bgr)
             used = "classical"

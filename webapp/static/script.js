@@ -89,6 +89,8 @@
     }
     const fd = new FormData();
     fd.append('image', file);
+    const modeEl = document.querySelector('input[name="enhance-mode"]:checked');
+    if (modeEl) fd.append('mode', modeEl.value);
 
     setLoading(true);
     try {
@@ -103,7 +105,9 @@
       imgAfter.src  = data.enhanced_b64;
       setSliderPos(50);
       metaSize.textContent = data.width + ' × ' + data.height + ' px';
-      metaMode.textContent = (data.mode === 'model') ? 'EDNIG model' : 'Classical fallback';
+      metaMode.textContent = data.mode.startsWith('model')
+        ? 'EDNIG ' + data.mode.replace('model:', '').replace('auto', '🔁 auto').replace('single', '⚡ single').replace('tiled', '🧩 tiled')
+        : 'Classical fallback';
       metaTime.textContent = data.ms + ' ms';
       dlPng.href = '/api/download?session=' + encodeURIComponent(data.session) + '&kind=enhanced&format=png';
       dlJpg.href = '/api/download?session=' + encodeURIComponent(data.session) + '&kind=enhanced&format=jpg';
